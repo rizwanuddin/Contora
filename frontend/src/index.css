@@ -2,19 +2,298 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap');
+
 :root {
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+    --amber: #F5A623;
+    --amber-dim: #C47F0A;
+    --amber-glow: rgba(245, 166, 35, 0.15);
+    --surface-0: #0A0A0B;
+    --surface-1: #111113;
+    --surface-2: #18181C;
+    --surface-3: #222228;
+    --border: rgba(255, 255, 255, 0.07);
+    --text-primary: #F0EEE8;
+    --text-muted: #7A7870;
+    --text-dim: #4A4845;
+    --green: #3FCF8E;
+    --red: #F05252;
+    --yellow: #F5A623;
+}
+
+* {
+    box-sizing: border-box;
 }
 
 body {
-  margin: 0;
-  min-height: 100vh;
-  background: #f8f9fa;
+    margin: 0;
+    min-height: 100vh;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Grain overlay */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    opacity: 0.4;
+    pointer-events: none;
+    z-index: 0;
 }
 
 #root {
-  width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 0 1rem;
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 2rem;
+}
+
+/* Typography */
+.font-display {
+    font-family: 'Syne', sans-serif;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--surface-1);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: 2px;
+}
+
+/* Card */
+.card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+}
+
+.card-inner {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+/* Amber accent line */
+.accent-line {
+    width: 32px;
+    height: 2px;
+    background: var(--amber);
+    border-radius: 1px;
+}
+
+/* Upload zone */
+.upload-zone {
+    border: 1.5px dashed rgba(245, 166, 35, 0.3);
+    border-radius: 20px;
+    transition: border-color 0.2s, background 0.2s;
+    cursor: pointer;
+}
+
+.upload-zone:hover {
+    border-color: var(--amber);
+    background: var(--amber-glow);
+}
+
+/* Analyze button */
+.btn-analyze {
+    background: var(--amber);
+    color: #0A0A0B;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.875rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 24px;
+    width: 100%;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.btn-analyze:hover:not(:disabled) {
+    background: #FFB733;
+    transform: translateY(-1px);
+}
+
+.btn-analyze:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.btn-analyze:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Badge */
+.badge {
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+.badge-critical {
+    background: rgba(240, 82, 82, 0.15);
+    color: #F47F7F;
+    border: 1px solid rgba(240, 82, 82, 0.2);
+}
+
+.badge-warning {
+    background: rgba(245, 166, 35, 0.12);
+    color: #F5A623;
+    border: 1px solid rgba(245, 166, 35, 0.2);
+}
+
+.badge-pass {
+    background: rgba(63, 207, 142, 0.12);
+    color: #3FCF8E;
+    border: 1px solid rgba(63, 207, 142, 0.2);
+}
+
+/* Issue card */
+.issue-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    transition: border-color 0.15s;
+}
+
+.issue-card:hover {
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+.issue-card.critical {
+    border-left: 2px solid var(--red);
+}
+
+.issue-card.warning {
+    border-left: 2px solid var(--yellow);
+}
+
+/* Textarea */
+.ac-textarea {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--text-primary);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.ac-textarea:focus {
+    border-color: rgba(245, 166, 35, 0.5);
+}
+
+/* Copy button */
+.btn-copy {
+    font-size: 0.7rem;
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.btn-copy:hover {
+    color: var(--amber);
+    border-color: rgba(245, 166, 35, 0.4);
+}
+
+/* Section label */
+.section-label {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* Fade in animation */
+@keyframes fadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-up {
+    animation: fadeUp 0.4s ease forwards;
+}
+
+.fade-up-1 {
+    animation: fadeUp 0.4s 0.05s ease both;
+}
+
+.fade-up-2 {
+    animation: fadeUp 0.4s 0.12s ease both;
+}
+
+.fade-up-3 {
+    animation: fadeUp 0.4s 0.2s ease both;
+}
+
+/* Spinner */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.spinner {
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--surface-3);
+    border-top-color: var(--amber);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* Ratio bar */
+.ratio-bar-track {
+    height: 4px;
+    background: var(--surface-3);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.ratio-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
 }
