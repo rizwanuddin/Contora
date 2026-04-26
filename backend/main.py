@@ -100,12 +100,13 @@ def analyze_contrast(image):
         return [], full_ocr_text
 
     width, height = image.size
-    gray_image = image.convert('L') # Use original image for color data
 
     for region in regions:
         x, y, w, h = region['x'], region['y'], region['w'], region['h']
 
-        padding = max(2, w // 6)
+        # CRITICAL FIX 1: Padding is now based on HEIGHT (h). 
+        # Using width (w) on full sentences added hundreds of pixels of blank background!
+        padding = max(2, h // 4)
         x1 = max(0, x - padding)
         y1 = max(0, y - padding)
         x2 = min(width, x + w + padding)
@@ -113,36 +114,36 @@ def analyze_contrast(image):
 
         # Crop from the ORIGINAL un-altered image
         crop = image.crop((x1, y1, x2, y2))
-        gray_crop = gray_image.crop((x1, y1, x2, y2))
-
-        gray_pixels = list(gray_crop.getdata())
-        if not gray_pixels:
-            continue
-
-        threshold = sum(gray_pixels) / len(gray_pixels)
-
-        fg_pixels = []
-        bg_pixels = []
-
         crop_pixels = list(crop.getdata())
-        for idx, pixel in enumerate(crop_pixels):
-            if len(pixel) == 4:
-                pixel = pixel[:3]
-
-            if gray_pixels[idx] < threshold:
-                fg_pixels.append(pixel)
-            else:
-                bg_pixels.append(pixel)
-
-        if not fg_pixels or not bg_pixels:
+        
+        if not crop_pixels:
             continue
 
-        avg_fg = tuple(sum(c[i] for c in fg_pixels) // len(fg_pixels) for i in range(3))
-        avg_bg = tuple(sum(c[i] for c in bg_pixels) // len(bg_pixels) for i in range(3))
+        # Strip alpha channel if present
+        cleaned_pixels = [p[:3] for p in crop_pixels if len(p) >= 3]
 
-        l_fg = rgb_to_relative_luminance(*avg_fg)
-        l_bg = rgb_to_relative_luminance(*avg_bg)
-        ratio = contrast_ratio(l_fg, l_bg)
+        # Fast heuristic to sort pixels from darkest to lightest
+        def perceived_brightness(pixel):
+            return 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2]
+
+        cleaned_pixels.sort(key=perceived_brightness)
+
+        # CRITICAL FIX 2: Average the top 2% of extremes.
+        # This guarantees we grab actual text and actual background, regardless
+        # of how thin the font is, while smoothing out JPEG compression noise.
+        sample_size = max(1, int(len(cleaned_pixels) * 0.02))
+        
+        dark_pixels = cleaned_pixels[:sample_size]
+        light_pixels = cleaned_pixels[-sample_size:]
+        
+        color_dark = tuple(sum(c[i] for c in dark_pixels) // len(dark_pixels) for i in range(3))
+        color_light = tuple(sum(c[i] for c in light_pixels) // len(light_pixels) for i in range(3))
+
+        l_dark = rgb_to_relative_luminance(*color_dark)
+        l_light = rgb_to_relative_luminance(*color_light)
+        
+        # Calculate ratio (contrast_ratio function expects l1, l2 and handles the max/min)
+        ratio = contrast_ratio(l_dark, l_light)
 
         # Use the max word height, not the bounding box height, to determine font size
         is_large_text = region['max_word_h'] >= 24
@@ -151,7 +152,7 @@ def analyze_contrast(image):
             issues.append({
                 'type': 'contrast',
                 'severity': 'critical',
-                'text': region['text'][:80], # Increased preview length since it's a full line
+                'text': region['text'][:80], 
                 'ratio': round(ratio, 2),
                 'required': '3:1 for large text' if is_large_text else '4.5:1 for normal text',
                 'actual': f'{ratio:.2f}:1'
@@ -216,7 +217,6 @@ def analyze():
     except Exception as e:
         return jsonify({'error': f'Invalid image: {str(e)}'}), 400
 
-    # We now get the grouped OCR text directly from our analyzer to ensure parity
     issues, ocr_text = analyze_contrast(image)
 
     alt_text = generate_alt_text(ocr_text, issues)
