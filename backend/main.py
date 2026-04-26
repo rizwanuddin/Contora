@@ -4,11 +4,15 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+from openai import OpenAI
 
 app = Flask(__name__)
 CORS(app)
 
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+)
 
 def rgb_to_relative_luminance(r, g, b):
     def channel(c):
@@ -38,7 +42,6 @@ def extract_regions_from_image(ocr_image):
         except ValueError:
             conf = -1
 
-        # REVERTED: Back to the simple, permissive confidence check
         if text and conf > 30:
             block = ocr_data['block_num'][i]
             par = ocr_data['par_num'][i]
@@ -82,27 +85,21 @@ def analyze_contrast(image):
     issues = []
     gray_image = image.convert('L')
     
-    # --- MULTI-PASS OCR STRATEGY ---
     all_regions = []
 
-    # Pass 1: High Contrast (Cleanest)
     enhancer = ImageEnhance.Contrast(gray_image)
     img_p1 = enhancer.enhance(4.0)
     all_regions.extend(extract_regions_from_image(img_p1))
 
-    # Pass 2: Inverted (Cleanest for light text on dark backgrounds)
     img_p2 = ImageOps.invert(gray_image)
     all_regions.extend(extract_regions_from_image(img_p2))
 
-    # Pass 3: Hard Binarization (Messy, but catches invisible text)
     gray_pixels = list(gray_image.getdata())
     mean_lum = sum(gray_pixels) / len(gray_pixels) if gray_pixels else 128
     img_p3 = gray_image.point(lambda p: 255 if p > mean_lum else 0)
     all_regions.extend(extract_regions_from_image(img_p3))
 
-    # REMOVED PASS 4 (Edge Detection) to stop grid hallucinations
 
-    # --- SMART OVERLAP DEDUPLICATION ---
     final_regions = []
     for r in all_regions:
         is_duplicate = False
