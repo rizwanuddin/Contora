@@ -2,7 +2,7 @@ import io
 import re
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps, ImageFilter
 import pytesseract
 
 app = Flask(__name__)
@@ -22,28 +22,11 @@ def contrast_ratio(l1, l2):
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def preprocess_for_ocr(image):
-    """
-    Artificially boost contrast so Tesseract can 'see' low contrast text.
-    This image is ONLY used for finding coordinates, not for color checking.
-    """
-    gray = image.convert('L')
-    enhancer = ImageEnhance.Contrast(gray)
-    # A factor of 4.0 aggressively darkens grays and lightens light backgrounds
-    return enhancer.enhance(4.0)
-
-
-def analyze_contrast(image):
-    issues = []
-    
-    # 1. Preprocess the image specifically to help Tesseract find the text
-    ocr_image = preprocess_for_ocr(image)
-    
-    # psm 11 helps find scattered text (like UI elements and buttons)
+def extract_regions_from_image(ocr_image):
+    """Helper function to run OCR and group bounding boxes by line."""
     custom_config = r'--psm 11'
     ocr_data = pytesseract.image_to_data(ocr_image, output_type=pytesseract.Output.DICT, config=custom_config)
 
-    # 2. Group word-level detections into line-level bounding boxes
     lines = {}
     n_boxes = len(ocr_data['text'])
 
@@ -54,8 +37,8 @@ def analyze_contrast(image):
         except ValueError:
             conf = -1
 
+        # REVERTED: Back to the simple, permissive confidence check
         if text and conf > 30:
-            # Create a unique key for the paragraph/line
             block = ocr_data['block_num'][i]
             par = ocr_data['par_num'][i]
             line = ocr_data['line_num'][i]
@@ -71,7 +54,7 @@ def analyze_contrast(image):
                     'x1': x, 'y1': y, 
                     'x2': x + w, 'y2': y + h,
                     'text_parts': [text],
-                    'heights': [h] # Track individual word heights for font-size estimation
+                    'heights': [h] 
                 }
             else:
                 lines[line_key]['x1'] = min(lines[line_key]['x1'], x)
@@ -81,7 +64,6 @@ def analyze_contrast(image):
                 lines[line_key]['text_parts'].append(text)
                 lines[line_key]['heights'].append(h)
 
-    # Convert our line groupings back into regions
     regions = []
     for line in lines.values():
         regions.append({
@@ -90,47 +72,89 @@ def analyze_contrast(image):
             'w': line['x2'] - line['x1'],
             'h': line['y2'] - line['y1'],
             'text': " ".join(line['text_parts']),
-            'max_word_h': max(line['heights']) # More accurate for font size than total box height
+            'max_word_h': max(line['heights'])
         })
+    return regions
 
-    # Create a clean string of all detected text based on our lines
-    full_ocr_text = "\n".join([r['text'] for r in regions])
 
-    if not regions:
+def analyze_contrast(image):
+    issues = []
+    gray_image = image.convert('L')
+    
+    # --- MULTI-PASS OCR STRATEGY ---
+    all_regions = []
+
+    # Pass 1: High Contrast (Cleanest)
+    enhancer = ImageEnhance.Contrast(gray_image)
+    img_p1 = enhancer.enhance(4.0)
+    all_regions.extend(extract_regions_from_image(img_p1))
+
+    # Pass 2: Inverted (Cleanest for light text on dark backgrounds)
+    img_p2 = ImageOps.invert(gray_image)
+    all_regions.extend(extract_regions_from_image(img_p2))
+
+    # Pass 3: Hard Binarization (Messy, but catches invisible text)
+    gray_pixels = list(gray_image.getdata())
+    mean_lum = sum(gray_pixels) / len(gray_pixels) if gray_pixels else 128
+    img_p3 = gray_image.point(lambda p: 255 if p > mean_lum else 0)
+    all_regions.extend(extract_regions_from_image(img_p3))
+
+    # REMOVED PASS 4 (Edge Detection) to stop grid hallucinations
+
+    # --- SMART OVERLAP DEDUPLICATION ---
+    final_regions = []
+    for r in all_regions:
+        is_duplicate = False
+        r_box = (r['x'], r['y'], r['x'] + r['w'], r['y'] + r['h'])
+        
+        for fr in final_regions:
+            fr_box = (fr['x'], fr['y'], fr['x'] + fr['w'], fr['y'] + fr['h'])
+            
+            # Check bounding box collision (Overlap)
+            x_left = max(r_box[0], fr_box[0])
+            y_top = max(r_box[1], fr_box[1])
+            x_right = min(r_box[2], fr_box[2])
+            y_bottom = min(r_box[3], fr_box[3])
+            
+            if x_right > x_left and y_bottom > y_top:
+                # They overlap. Because Pass 1 & 2 run first, `final_regions` 
+                # already holds the cleanest version of this text.
+                # We toss this messy duplicate out.
+                is_duplicate = True
+                break
+                
+        if not is_duplicate:
+            final_regions.append(r)
+
+    full_ocr_text = "\n".join([r['text'] for r in final_regions])
+
+    if not final_regions:
         return [], full_ocr_text
 
     width, height = image.size
 
-    for region in regions:
+    for region in final_regions:
         x, y, w, h = region['x'], region['y'], region['w'], region['h']
 
-        # CRITICAL FIX 1: Padding is now based on HEIGHT (h). 
-        # Using width (w) on full sentences added hundreds of pixels of blank background!
-        padding = max(2, h // 4)
+        padding = 0
         x1 = max(0, x - padding)
         y1 = max(0, y - padding)
         x2 = min(width, x + w + padding)
         y2 = min(height, y + h + padding)
 
-        # Crop from the ORIGINAL un-altered image
         crop = image.crop((x1, y1, x2, y2))
         crop_pixels = list(crop.getdata())
         
         if not crop_pixels:
             continue
 
-        # Strip alpha channel if present
         cleaned_pixels = [p[:3] for p in crop_pixels if len(p) >= 3]
 
-        # Fast heuristic to sort pixels from darkest to lightest
         def perceived_brightness(pixel):
             return 0.299 * pixel[0] + 0.587 * pixel[1] + 0.114 * pixel[2]
 
         cleaned_pixels.sort(key=perceived_brightness)
 
-        # CRITICAL FIX 2: Average the top 2% of extremes.
-        # This guarantees we grab actual text and actual background, regardless
-        # of how thin the font is, while smoothing out JPEG compression noise.
         sample_size = max(1, int(len(cleaned_pixels) * 0.02))
         
         dark_pixels = cleaned_pixels[:sample_size]
@@ -142,10 +166,7 @@ def analyze_contrast(image):
         l_dark = rgb_to_relative_luminance(*color_dark)
         l_light = rgb_to_relative_luminance(*color_light)
         
-        # Calculate ratio (contrast_ratio function expects l1, l2 and handles the max/min)
         ratio = contrast_ratio(l_dark, l_light)
-
-        # Use the max word height, not the bounding box height, to determine font size
         is_large_text = region['max_word_h'] >= 24
 
         if ratio < 3:
@@ -171,7 +192,6 @@ def analyze_contrast(image):
 
 
 def generate_alt_text(ocr_text, issues):
-    """Generate draft alt text based on OCR and contrast issues."""
     text = ocr_text.strip() if ocr_text else ''
 
     if not text:
@@ -187,7 +207,6 @@ def generate_alt_text(ocr_text, issues):
 
 
 def generate_long_description(ocr_text, issues, image_size):
-    """Generate draft long description."""
     text = ocr_text.strip() if ocr_text else ''
 
     width, height = image_size
